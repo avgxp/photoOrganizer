@@ -20,8 +20,6 @@ class OrganizerWorker(Thread):
                     if pattern.match(fname):
                         print(directory+" "+fname)
                         self.processFile(directory,fname)
-                    else:
-                        print("no match")
             finally:
                 self.queue.task_done()
 
@@ -85,7 +83,7 @@ def multiSearchDirectory(rootDir):
         worker.daemon = True
         worker.start()
     for dirName, subdirList, fileList in os.walk(rootDir, topdown=False):
-        #print('Found directory: %s' % dirName)
+        print('Found directory: %s' % dirName)
         queue.put((dirName,fileList))
     queue.join()
 
