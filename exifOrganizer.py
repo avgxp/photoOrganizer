@@ -2,24 +2,23 @@ import exifread,os,sys,re
 from queue import Queue
 from threading import Thread
 
+#pattern=re.compile(r'^.{1,}\.jp[e]{0,1}g$',re.IGNORECASE)
+#pattern=re.compile(r'^.{1,}\.(arw$|cr2$)',re.IGNORECASE)
+pattern = re.compile(r'^.{1,}\.(arw$|cr2$|jp[e]{0,1}g$|orf$)',re.IGNORECASE)
+newDirectory = r'F:\JPEG'
 
-newDirectory = r'D:\JPEG'
 
 class OrganizerWorker(Thread):
     
-    def __init__(self,queue):
+    def __init__(self,imageQueue):
         Thread.__init__(self)
-        self.queue=queue
+        self.queue=imageQueue
 
     def run(self):
-        pattern=re.compile(r'^.{1,}\.jp[e]{0,1}g',re.IGNORECASE)
         while True:
-            directory,fileList = self.queue.get()
+            directory,fname,targetDir = self.queue.get()
             try:
-                for fname in fileList:
-                    if pattern.match(fname):
-                        print(directory+" "+fname)
-                        self.processFile(directory,fname)
+                self.processFile(directory,fname,targetDir)
             finally:
                 self.queue.task_done()
 
@@ -27,68 +26,89 @@ class OrganizerWorker(Thread):
         os.remove(targetDir+'\\'+date+'\\'+fName)
         os.rename(dirName+'\\'+fName,targetDir+'\\'+date+'\\'+fName)
     
-    def processFile(self,dirName,fName):
-        alwaysOverwrite=False
-        with open(dirName+'\\'+fName,'rb') as image:
-            dateandtime = str(exifread.process_file(image).get('EXIF DateTimeOriginal'))
-            year = dateandtime.split(':')[0]
-            date =dateandtime.split(' ')[0].replace(':','-')
-            if year not in [x[1] for x in os.walk(newDirectory)][0]:
-                try:
-                    os.mkdir(newDirectory+'\\'+year)
-                except OSError:
-                    print ("Creation of the directory %s failed" % newDirectory+'\\'+year)
-                else:  
-                    print ("Successfully created the directory %s " % newDirectory+'\\'+year)
-        targetDir=newDirectory+'\\'+year
-        print(targetDir+'\\'+date)
-        if date not in [x[1] for x in os.walk(targetDir)][0]:
-            try:
-                os.mkdir(targetDir+'\\'+date)
-            except OSError:
-                print ("Creation of the directory %s failed" % targetDir+'\\'+date)
-                exit()
-            else:  
-                print ("Successfully created the directory %s " % targetDir+'\\'+date)
+    def processFile(self,dirName,fName,targetDir):
         try:
-            os.rename(dirName+'\\'+fName,targetDir+'\\'+date+'\\'+fName)
+            os.rename(dirName+'\\'+fName,targetDir+'\\'+fName)
+            print(fName+' moved')
         except FileExistsError:
-            overwrite=input("Overwrite?")
-            if overwrite in ['yes','y'] or alwaysOverwrite:
-                self.overwritePhoto(dirName,targetDir,date,fName)
-            elif overwrite in ['Always']:
-                alwaysOverwrite=True
-                self.overwritePhoto(dirName,targetDir,date,fName)
-            else:
-                i=1
-                while True:
-                    try:
-                        os.rename(dirName+'\\'+fName,targetDir+'\\'+date+'\\'+fName.split('.')[0]+'_'+str(i)+'.jpg')
-                    except FileExistsError:
-                        continue
-                    else:
-                        break
-            
-                print(targetDir+'\\'+date+'\\'+fName+'_'+str(i))
-        else:
-            print(targetDir+'\\'+date+'\\'+fName)
+            i=1
+            while True:
+                try:
+                    os.rename(dirName+'\\'+fName,targetDir+'\\'+fName.split('.')[0]+'_'+str(i)+'.jpg')
+                except FileExistsError:
+                    i+=1
+                    continue
+                else:
+                    break
         return
+class directoryCreator(Thread):
+    
+    def __init__(self,dirQueue,imageQueue):
+        Thread.__init__(self)
+        self.queue=dirQueue
+        self.imageQueue =imageQueue
+
+    def run(self):
+        while True:
+            dirName,fileList = self.queue.get()
+            try:
+                self.processDirectory(dirName,fileList)
+            finally:
+                self.queue.task_done()
+
+    def processDirectory(self,dirName,fileList):
+        for fname in fileList:
+            if pattern.match(fname):    
+                with open(dirName+'\\'+fname,'rb') as image:
+                    exifList = ['EXIF DateTimeOriginal','EXIF ModifyDate','']
+                    dateandtime=False
+                    for exifTag in exifList:
+                        if not dateandtime:
+                            dateandtime = str(exifread.process_file(image).get(exifTag))
+                        else:
+                            break
+                if dateandtime:
+                    yearDir = self.setDirectory(dateandtime.split(':')[0],newDirectory)
+                    if yearDir:
+                        targetDir = self.setDirectory(dateandtime.split(' ')[0].replace(':','-'),yearDir)
+                        self.imageQueue.put((dirName,fname,targetDir))
+                        print(dirName+'\\'+fname+' added to queue')
+                      
+                        
+    def setDirectory(self,newFolder,inFolder):
+        if newFolder not in [x[1] for x in os.walk(inFolder)][0]:
+            if not os.path.exists(inFolder+'\\'+newFolder):
+                try:
+                    os.mkdir(inFolder+'\\'+newFolder)
+                except OSError:
+                    print ("Creation of the directory %s failed" % inFolder+'\\'+newFolder)
+                    return False
+        return inFolder+'\\'+newFolder
+
 
 def multiSearchDirectory(rootDir):
+    
+    dirQueue = Queue()
+    imageQueue = Queue()
+    for x in range(16):
+        dirworker = directoryCreator(dirQueue,imageQueue)
+        dirworker.daemon = True
+        dirworker.start()
+        
+    for dirName, subdirList, fileList in os.walk(rootDir, topdown=False):        
+        dirQueue.put((dirName,fileList))
+    dirQueue.join()
+    
+    for x in range(16):
+        imgageworker = OrganizerWorker(imageQueue)
+        imageworker.daemon = True
+        imageworker.start()
+    imageQueue.join()           
+                
 
-    queue = Queue()
-    for x in range(8):
-        print("worker created")
-        worker = OrganizerWorker(queue)
-        worker.daemon = True
-        worker.start()
-    for dirName, subdirList, fileList in os.walk(rootDir, topdown=False):
-        print('Found directory: %s' % dirName)
-        queue.put((dirName,fileList))
-    queue.join()
 
 def main(argv):
-    multiSearchDirectory(r'D:\test')
+    multiSearchDirectory(r'F:\User Files\Pictures')
 
 if __name__=="__main__":
     main(sys.argv[1:])
