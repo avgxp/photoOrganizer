@@ -1,11 +1,9 @@
-import exifread,os,sys,re
+import exifread,os,sys,re,time
 from queue import Queue
 from threading import Thread
 
-#pattern=re.compile(r'^.{1,}\.jp[e]{0,1}g$',re.IGNORECASE)
-#pattern=re.compile(r'^.{1,}\.(arw$|cr2$)',re.IGNORECASE)
-pattern = re.compile(r'^.{1,}\.(arw$|cr2$|jp[e]{0,1}g$|orf$)',re.IGNORECASE)
-newDirectory = r'F:\JPEG'
+pattern = re.compile(r'^.{1,}\.(arw$|cr2$|jp[e]{0,1}g$|orf$|png$)',re.IGNORECASE)
+newDirectory = r'F:\User Files\Pictures'
 
 
 class OrganizerWorker(Thread):
@@ -29,7 +27,7 @@ class OrganizerWorker(Thread):
     def processFile(self,dirName,fName,targetDir):
         try:
             os.rename(dirName+'\\'+fName,targetDir+'\\'+fName)
-            print(fName+' moved')
+            print(fName+' moved \n')
         except FileExistsError:
             i=1
             while True:
@@ -63,16 +61,19 @@ class directoryCreator(Thread):
                     exifList = ['EXIF DateTimeOriginal','EXIF ModifyDate','']
                     dateandtime=False
                     for exifTag in exifList:
-                        if not dateandtime:
-                            dateandtime = str(exifread.process_file(image).get(exifTag))
-                        else:
-                            break
-                if dateandtime:
+                        possibleDateTime = str(exifread.process_file(image).get(exifTag))
+                        if not dateandtime and possibleDateTime != '0000:00:00 00:00:00':
+                            dateandtime = possibleDateTime
+                    if dateandtime:
+                        dateandtime = time.strftime('%Y:%m:%d %H:%M:%S',time.localtime(os.path.getmtime(dirName+'\\'+fname)))
+                if dateandtime and dateandtime != 'None':
                     yearDir = self.setDirectory(dateandtime.split(':')[0],newDirectory)
                     if yearDir:
                         targetDir = self.setDirectory(dateandtime.split(' ')[0].replace(':','-'),yearDir)
                         self.imageQueue.put((dirName,fname,targetDir))
-                        print(dirName+'\\'+fname+' added to queue')
+                        print(dirName+'\\'+fname+' added to queue\n')
+                else:
+                    print(dirName+'\\'+fname+' failed\n')
                       
                         
     def setDirectory(self,newFolder,inFolder):
@@ -81,7 +82,7 @@ class directoryCreator(Thread):
                 try:
                     os.mkdir(inFolder+'\\'+newFolder)
                 except OSError:
-                    print ("Creation of the directory %s failed" % inFolder+'\\'+newFolder)
+                    print ("Creation of the directory %s failed" % inFolder+'\\'+newFolder+'\n')
                     return False
         return inFolder+'\\'+newFolder
 
@@ -90,7 +91,7 @@ def multiSearchDirectory(rootDir):
     
     dirQueue = Queue()
     imageQueue = Queue()
-    for x in range(16):
+    for x in range(2):
         dirworker = directoryCreator(dirQueue,imageQueue)
         dirworker.daemon = True
         dirworker.start()
@@ -98,9 +99,9 @@ def multiSearchDirectory(rootDir):
     for dirName, subdirList, fileList in os.walk(rootDir, topdown=False):        
         dirQueue.put((dirName,fileList))
     dirQueue.join()
-    
-    for x in range(16):
-        imgageworker = OrganizerWorker(imageQueue)
+
+    for x in range(2):
+        imageworker = OrganizerWorker(imageQueue)
         imageworker.daemon = True
         imageworker.start()
     imageQueue.join()           
@@ -108,7 +109,7 @@ def multiSearchDirectory(rootDir):
 
 
 def main(argv):
-    multiSearchDirectory(r'F:\User Files\Pictures')
+    multiSearchDirectory(r'F:\Unsorted')
 
 if __name__=="__main__":
     main(sys.argv[1:])
